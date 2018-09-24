@@ -23,15 +23,17 @@ import com.ibm.icu.text.Collator;
 import com.ibm.icu.text.RawCollationKey;
 import com.ibm.icu.text.RuleBasedCollator;
 import com.ibm.icu.util.ULocale;
+
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.DocValuesFieldExistsQuery;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
@@ -52,7 +54,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.BiFunction;
 import java.util.function.LongSupplier;
 
 public class ICUCollationKeywordFieldMapper extends FieldMapper {
@@ -95,8 +96,8 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
         }
 
         @Override
-        public void checkCompatibility(MappedFieldType otherFT, List<String> conflicts, boolean strict) {
-            super.checkCompatibility(otherFT, conflicts, strict);
+        public void checkCompatibility(MappedFieldType otherFT, List<String> conflicts) {
+            super.checkCompatibility(otherFT, conflicts);
             CollationFieldType other = (CollationFieldType) otherFT;
             if (!Objects.equals(collator, other.collator)) {
                 conflicts.add("mapper [" + name() + "] has different [collator]");
@@ -123,11 +124,12 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
         }
 
         @Override
-        public Query nullValueQuery() {
-            if (nullValue() == null) {
-                return null;
+        public Query existsQuery(QueryShardContext context) {
+            if (hasDocValues()) {
+                return new DocValuesFieldExistsQuery(name());
+            } else {
+                return new TermQuery(new Term(FieldNamesFieldMapper.NAME, name()));
             }
-            return termQuery(nullValue(), null);
         }
 
         @Override
@@ -566,7 +568,6 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
     private final String variableTop;
     private final boolean hiraganaQuaternaryMode;
     private final Collator collator;
-    private final BiFunction<String, BytesRef, Field> getDVField;
 
     protected ICUCollationKeywordFieldMapper(String simpleName, MappedFieldType fieldType, MappedFieldType defaultFieldType,
                                              Settings indexSettings, MultiFields multiFields, CopyTo copyTo, String rules, String language,
@@ -588,11 +589,6 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
         this.variableTop = variableTop;
         this.hiraganaQuaternaryMode = hiraganaQuaternaryMode;
         this.collator = collator;
-        if (indexCreatedVersion.onOrAfter(Version.V_5_6_0)) {
-            getDVField = SortedSetDocValuesField::new;
-        } else {
-            getDVField = SortedDocValuesField::new;
-        }
     }
 
     @Override
@@ -606,8 +602,8 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
     }
 
     @Override
-    protected void doMerge(Mapper mergeWith, boolean updateAllTypes) {
-        super.doMerge(mergeWith, updateAllTypes);
+    protected void doMerge(Mapper mergeWith) {
+        super.doMerge(mergeWith);
 
         List<String> conflicts = new ArrayList<>();
         ICUCollationKeywordFieldMapper icuMergeWith = (ICUCollationKeywordFieldMapper) mergeWith;
@@ -749,7 +745,9 @@ public class ICUCollationKeywordFieldMapper extends FieldMapper {
         }
 
         if (fieldType().hasDocValues()) {
-            fields.add(getDVField.apply(fieldType().name(), binaryValue));
+            fields.add(new SortedSetDocValuesField(fieldType().name(), binaryValue));
+        } else if (fieldType().indexOptions() != IndexOptions.NONE || fieldType().stored()) {
+            createFieldNamesField(context, fields);
         }
     }
 }

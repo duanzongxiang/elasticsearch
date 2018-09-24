@@ -19,11 +19,6 @@
 
 package org.elasticsearch.test.discovery;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Supplier;
-
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.service.ClusterApplier;
 import org.elasticsearch.cluster.service.MasterService;
@@ -41,6 +36,13 @@ import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
+
+import static org.elasticsearch.discovery.zen.SettingsBasedHostsProvider.DISCOVERY_ZEN_PING_UNICAST_HOSTS_SETTING;
+
 /**
  * A alternative zen discovery which allows using mocks for things like pings, as well as
  * giving access to internals.
@@ -56,6 +58,7 @@ public class TestZenDiscovery extends ZenDiscovery {
         public TestPlugin(Settings settings) {
             this.settings = settings;
         }
+
         @Override
         public Map<String, Supplier<Discovery>> getDiscoveryTypes(ThreadPool threadPool, TransportService transportService,
                                                                   NamedWriteableRegistry namedWriteableRegistry,
@@ -63,7 +66,10 @@ public class TestZenDiscovery extends ZenDiscovery {
                                                                   ClusterSettings clusterSettings, UnicastHostsProvider hostsProvider,
                                                                   AllocationService allocationService) {
             return Collections.singletonMap("test-zen",
-                () -> new TestZenDiscovery(settings, threadPool, transportService, namedWriteableRegistry, masterService,
+                () -> new TestZenDiscovery(
+                    // we don't get the latest setting which were updated by the extra settings for the plugin. TODO: fix.
+                    Settings.builder().put(settings).putList(DISCOVERY_ZEN_PING_UNICAST_HOSTS_SETTING.getKey()).build(),
+                    threadPool, transportService, namedWriteableRegistry, masterService,
                     clusterApplier, clusterSettings, hostsProvider, allocationService));
         }
 
@@ -74,7 +80,10 @@ public class TestZenDiscovery extends ZenDiscovery {
 
         @Override
         public Settings additionalSettings() {
-            return Settings.builder().put(DiscoveryModule.DISCOVERY_TYPE_SETTING.getKey(), "test-zen").build();
+            return Settings.builder()
+                .put(DiscoveryModule.DISCOVERY_TYPE_SETTING.getKey(), "test-zen")
+                .putList(DISCOVERY_ZEN_PING_UNICAST_HOSTS_SETTING.getKey())
+                .build();
         }
     }
 
